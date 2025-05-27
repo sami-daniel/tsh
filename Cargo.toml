@@ -1,0 +1,9 @@
+[package]
+name = "tsh"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+regex = "1.11.1"
+shell-words = "1.1.0"
