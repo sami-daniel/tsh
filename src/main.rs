@@ -1,9 +1,10 @@
-use std::{io::{stdin, stdout, Write}};
+mod interpreter;
+mod utils;
+
+use std::io::{Write, stdin, stdout};
 
 use anyhow::Result;
-use shell::executor::execute;
-
-mod shell;
+use interpreter::executor::execute;
 
 fn main() -> Result<()> {
     let mut stdout = stdout();
@@ -16,8 +17,8 @@ fn main() -> Result<()> {
     loop {
         stdout.write_all(b"$ ")?;
         stdin.read_line(&mut buffer)?;
+        execute(&buffer, &mut stdout)?;
         stdout.flush()?;
-        execute(&buffer)?;
         // TODO: Looks like bad to create a new buffer
         // every iteration of the loop
         buffer = String::new();
