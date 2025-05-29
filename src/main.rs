@@ -10,12 +10,10 @@ fn main() -> Result<()> {
     let mut stdout = stdout();
     let stdin = stdin();
     let mut buffer = String::new();
-
-    stdout.write_all(b"$ ")?;
-    stdout.flush()?;
-
+    
     loop {
         stdout.write_all(b"$ ")?;
+        stdout.flush()?;
         stdin.read_line(&mut buffer)?;
         execute(&buffer, &mut stdout)?;
         stdout.flush()?;

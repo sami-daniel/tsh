@@ -1,4 +1,5 @@
 mod engine;
+mod resolver;
 
 use std::io::Write;
 
@@ -12,7 +13,7 @@ where
     if let Some(command) = try_parse_input(input)? {
         dbg!(&command);
 
-        command.exec(output_buffer)?;
+        command.exec()?;
     }
 
     Ok(())
