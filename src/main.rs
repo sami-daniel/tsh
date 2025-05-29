@@ -1,24 +1,30 @@
 mod interpreter;
 mod utils;
 
-use std::io::{Write, stdin, stdout};
+use std::io::Write;
 
 use anyhow::Result;
-use interpreter::executor::execute;
+use interpreter::executor;
+
+use crate::utils::{POISONED_LOCK_MSG_ERR, STDIN, STDOUT};
 
 fn main() -> Result<()> {
-    let mut stdout = stdout();
-    let stdin = stdin();
     let mut buffer = String::new();
-    
+
     loop {
-        stdout.write_all(b"$ ")?;
-        stdout.flush()?;
-        stdin.read_line(&mut buffer)?;
-        execute(&buffer, &mut stdout)?;
-        stdout.flush()?;
-        // TODO: Looks like bad to create a new buffer
-        // every iteration of the loop
-        buffer = String::new();
+        {
+            let stdout = STDOUT.lock().expect(POISONED_LOCK_MSG_ERR);
+            let stdin = STDIN.lock().expect(POISONED_LOCK_MSG_ERR);
+            let stdin = stdin.borrow_mut();
+            let mut stdout = stdout.borrow_mut();
+
+            stdout.write_all(b"$ ")?;
+            stdout.flush()?;
+            stdin.read_line(&mut buffer)?;
+        }
+
+        executor::execute(&buffer)?;
+
+        buffer.clear();
     }
 }

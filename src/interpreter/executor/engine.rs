@@ -1,14 +1,11 @@
 use std::{
-    io::{Write, stderr, stdin, stdout},
-    os::fd::{AsFd, FromRawFd, OwnedFd},
+    os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd},
     path::Path,
 };
 
 use anyhow::Result;
 use nix::{
-    fcntl::{OFlag, open},
-    sys::stat::Mode,
-    unistd::{close, dup, dup2},
+    errno::Errno, fcntl::{open, OFlag}, libc, sys::stat::Mode, unistd::{close, dup, dup2, dup2_raw}
 };
 
 use crate::{
@@ -21,17 +18,17 @@ use super::resolver::CommandExecutor;
 impl Command {
     pub fn exec(self: &Command) -> Result<()> {
         let mut redirect_helper = RedirectHelper::new();
-        
+
         // first step is to configure redirects
         self.configure_redirects(&mut redirect_helper)?;
-        
-        let command_executor = CommandExecutor::from_command(&self)?;
-        let executable = command_executor.builtin_exec;
-        let mut stdout = stdout().lock();
-        let mut stderr = stderr().lock();
 
-        executable(&stdin(), &mut stdout, &mut stderr)?;
-        
+        let command_executor = CommandExecutor::from_command(&self)?;
+        let executable = command_executor.executable;
+
+        executable()?;
+
+        redirect_helper.reset_sources()?;
+
         Ok(())
     }
 
@@ -45,7 +42,7 @@ impl Command {
                                 redirect_helper.redirect_to_file(file, redirect.from_fd, false)?
                             } else {
                                 // Impossible redirect text output (redirect without @) to file descriptor
-                                report_line_err();
+                                report_line_err(Some("Fatal TSH Error: File redirection to file descriptor detected"));
                             }
                         }
                         RedirectionType::AppendOutput => {
@@ -53,10 +50,17 @@ impl Command {
                                 redirect_helper.redirect_to_file(file, redirect.from_fd, true)?
                             } else {
                                 // Impossible redirect text output (redirect without @) to file descriptor
-                                report_line_err();
+                                report_line_err(Some("Fatal TSH Error: File redirection to file descriptor detected"));
                             }
                         }
-                        _ => {}
+                        _ => {
+                            if let RedirectionTarget::FileDescriptor(fd) = &redirect.target {
+                                redirect_helper.redirect_to_fd(redirect.from_fd, *fd)?
+                            } else {
+                                // Impossible redirect file descriptor (redirect with @) to real file
+                                report_line_err(Some("Fatal TSH Error: File descriptor redirection to File detected"));
+                            }
+                        },
                     }
                 }
 
@@ -67,7 +71,7 @@ impl Command {
 }
 
 struct RedirectHelper {
-    original_fds: Vec<(OwnedFd, OwnedFd)>,
+    original_fds: Vec<(i32, i32)>,
 }
 
 impl RedirectHelper {
@@ -77,44 +81,112 @@ impl RedirectHelper {
         }
     }
 
+    fn has_original_for(&self, fd: i32) -> bool {
+        self.original_fds.iter().any(|(_, original)| original == &fd)
+    }
+    
     fn reset_sources(&mut self) -> Result<()> {
-        for (copy, original) in &mut self.original_fds {
-            dup2(copy.try_clone()?, original)?;
-            close(copy.try_clone()?)?;
+        for (dup, original) in self.original_fds.iter() {
+            // SAFETY: 
+            // If the duplication returned some error and setted errno, we catch and return it. If
+            // both are the same (like source_fd are the same fd of file), we don't do anything. It
+            // can be dangerous if used incorrectly, like, if dup refers to other file descriptor. 
+            let result = unsafe { libc::dup2(*dup, *original) };
+            if result == -1 {
+                return Err(Errno::last().into());
+            }
+            
+            // SAFETY:
+            // Assuming that the self.original_fds are the correctly fds (copies of original)
+            // we can safely close the dup2, cause now we are 'poiting' to the fd to the original
+            // open file description.
+            let result = unsafe { libc::close(*dup) };
+            if result == -1 {
+                return Err(Errno::last().into());
+            }
         }
 
         Ok(())
     }
 
     fn redirect_to_file(&mut self, file: &Path, fd: i32, append: bool) -> Result<()> {
-        let flags = OFlag::empty();
-        let flags = flags.union(OFlag::O_CREAT);
-        let flags = flags.union(OFlag::O_RDWR);
-        let flags = if append {
-            flags.union(OFlag::O_APPEND)
-        } else {
-            flags.union(OFlag::O_TRUNC)
-        };
+        // SAFETY: 
+        // If the duplication returned some error and setted errno, we catch it and proceed.
+        if !self.has_original_for(fd) {            
+            // Create a duplicated fd for later, we can rollback the file descriptors
+            // to its orignal open file descriptors
 
-        dbg!(flags);
+            let result = unsafe { libc::dup(fd) };
+            if result == -1 {
+                return Err(Errno::last().into());
+            }
+            self.original_fds.push((result, fd));
+        }
+        
+        let flags = OFlag::O_CREAT | OFlag::O_RDWR | if append { OFlag::O_APPEND } else { OFlag::O_TRUNC };
 
-        // Create a duplicated fd for later, we can rollback the file descriptors
-        // to its orignal open file descriptors
         // The actual call from libc returns -1 and errno is setted indicating the error. The
         // errors that errno can set are described in: https://www.man7.org/linux/man-pages/man2/open.2.html#ERRORS
-        let file_fd = open(file, flags, Mode::from_bits(0o644).unwrap())?;
-        // The actual call from libc returns -1 and errno is setted indicating the error. The
-        // errors that errno can set are described in: https://www.man7.org/linux/man-pages/man2/dup.2.html#ERRORS
-        dup2(file_fd.as_fd(), &mut unsafe {
-            // According to docs, this should be open and be owned.
-            // Read: https://doc.rust-lang.org/beta/std/io/index.html#io-safety
-            let source_fd = OwnedFd::from_raw_fd(fd);
-            let dup_fd = dup(source_fd.try_clone()?)?;
-            self.original_fds.push((dup_fd, source_fd.try_clone()?));
+        let file_fd: i32 = open(file, flags, Mode::from_bits(0o644).unwrap())?.into_raw_fd();
+       
+        // SAFETY: 
+        // If the duplication returned some error and setted errno, we catch and return it. If
+        // both are the same (like source_fd are the same fd of file), we don't do anything.
+        let result = unsafe { libc::dup2(file_fd, fd) };
+        if result == -1 {
+            return Err(Errno::last().into());
+        } else if result == fd {
+            return Ok(());
+        }
 
-            source_fd
-        })?;
-        close(file_fd)?;
+        // SAFETY: 
+        // If the duplication returned some error and setted errno, we catch it and proceed.
+        // Here we can safelly close the file_descriptor of file cause now we have the 'fd'
+        // new_fd 'pointing' to the file_fd open file description, so even closign it, the
+        // kernel will mantain the open file description open, cause we still have the 'fd'
+        // 'pointing' to it.
+        let result = unsafe { libc::close(file_fd) };
+        if result == -1 {
+            return Err(Errno::last().into());
+        }
+
+        Ok(())
+    }
+
+    fn redirect_to_fd(&mut self, source: i32, dest: i32) -> Result<()> {
+        // SAFETY: 
+        // If the duplication returned some error and setted errno, we catch it and proceed.
+        if !self.has_original_for(source) {
+            // Create a duplicated fd for later, we can rollback the file descriptors
+            // to its orignal open file descriptors
+
+            let result = unsafe { libc::dup(source) };
+            if result == -1 {
+                return Err(Errno::last().into());
+            }
+            self.original_fds.push((result, source));
+        }
+        
+        // SAFETY: 
+        // If the duplication returned some error and setted errno, we catch and return it. If
+        // both are the same (like source_fd are the same fd of open file description), we don't do anything.
+        let result = unsafe { libc::dup2(dest, source) };
+        if result == -1 {
+            return Err(Errno::last().into());
+        } else if result == source {
+            return Ok(());
+        }
+
+        // SAFETY: 
+        // If the duplication returned some error and setted errno, we catch it and proceed.
+        // Here we can safelly close the file_descriptor of file cause now we have the 'fd'
+        // new_fd 'pointing' to the file_fd open file description, so even closign it, the
+        // kernel will mantain the open file description open, cause we still have the 'fd'
+        // 'pointing' to it.
+        let result = unsafe { libc::close(dest) };
+        if result == -1 {
+            return Err(Errno::last().into());
+        }
 
         Ok(())
     }

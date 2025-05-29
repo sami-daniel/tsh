@@ -1,10 +1,13 @@
-use crate::interpreter::parser::Command;
+use crate::{
+    interpreter::parser::Command,
+    utils::{POISONED_LOCK_MSG_ERR, STDOUT},
+};
 use anyhow::{Result, anyhow};
 use std::io::{Read, Write};
 
 pub struct CommandExecutor {
     pub target: ExecutorTarget,
-    pub builtin_exec: Box<dyn FnOnce(&dyn Read, &mut dyn Write, &mut dyn Write) -> Result<()>>,
+    pub executable: Box<dyn FnOnce() -> Result<()>>,
 }
 
 pub enum ExecutorTarget {
@@ -25,7 +28,7 @@ impl CommandExecutor {
                 match cmd_name {
                     "echo" => Ok(Self {
                         target: ExecutorTarget::Bultin(BuiltinTarget::Echo),
-                        builtin_exec: build_echo_exec(args),
+                        executable: build_echo_exec(args),
                     }),
                     _ => Err(anyhow!("Command not recognized: {}", cmd_name)),
                 }
@@ -34,11 +37,14 @@ impl CommandExecutor {
     }
 }
 
-fn build_echo_exec(
-    args: &Vec<String>,
-) -> Box<dyn FnOnce(&dyn Read, &mut dyn Write, &mut dyn Write) -> Result<()>> {
+fn build_echo_exec(args: &Vec<String>) -> Box<dyn FnOnce() -> Result<()>> {
+    // TODO: Refactor to not clone args.
     let args = args.clone();
-    Box::new(move |_, stdout, _| {
+
+    Box::new(move || {
+        let stdout = STDOUT.lock().expect(&POISONED_LOCK_MSG_ERR);
+        let mut stdout = stdout.borrow_mut();
+
         let mut peekable = args.iter().peekable();
         while let Some(arg) = peekable.next() {
             stdout.write_all(arg.as_bytes())?;

@@ -88,11 +88,8 @@ pub fn try_parse_input(input: &str) -> Result<Option<Command>> {
                     if let Ok(fd_num) = fd_num.parse() {
                         RedirectionType::RedirectToFileDescriptor(fd_num)
                     } else {
-                        report_line_err();
-                        panic!(
-                            "Failed to parse 'redirect to' number file descriptor: Tried parse {}",
-                            fd_num
-                        )
+                        report_line_err(Some(format!("Failed to parse 'redirect to' number file descriptor: Tried parse {}", fd_num).as_str()));
+                        panic!()
                     }
                 } else if chars.peek().is_none() {
                     return Err(anyhow!(
