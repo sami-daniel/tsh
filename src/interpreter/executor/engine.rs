@@ -110,12 +110,12 @@ impl RedirectHelper {
     }
 
     fn redirect_to_file(&mut self, file: &Path, fd: i32, append: bool) -> Result<()> {
-        // SAFETY: 
-        // If the duplication returned some error and setted errno, we catch it and proceed.
         if !self.has_original_for(fd) {            
             // Create a duplicated fd for later, we can rollback the file descriptors
             // to its orignal open file descriptors
 
+            // SAFETY: 
+            // If the duplication returned some error and setted errno, we catch it and proceed.
             let result = unsafe { libc::dup(fd) };
             if result == -1 {
                 return Err(Errno::last().into());
@@ -154,12 +154,12 @@ impl RedirectHelper {
     }
 
     fn redirect_to_fd(&mut self, source: i32, dest: i32) -> Result<()> {
-        // SAFETY: 
-        // If the duplication returned some error and setted errno, we catch it and proceed.
         if !self.has_original_for(source) {
             // Create a duplicated fd for later, we can rollback the file descriptors
             // to its orignal open file descriptors
-
+            
+            // SAFETY: 
+            // If the duplication returned some error and setted errno, we catch it and proceed.
             let result = unsafe { libc::dup(source) };
             if result == -1 {
                 return Err(Errno::last().into());
