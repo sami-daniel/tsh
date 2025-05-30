@@ -58,16 +58,16 @@ pub fn get_executable_path<'a>(
 }
 
 pub fn get_executables_in_path() -> Vec<PathBuf> {
-    // FIXME: Put the executables in some tsh.sources file to avoid loading 
+    // FIXME: Put the executables in some tsh.sources file to avoid loading
     // this everytime that bash starts up, and update or remove entries using
     // communication with aptd (or the current daemon of the package manager)
-    // via dbus 
-    
+    // via dbus
+
     let executables = Arc::new(Mutex::new(vec![]));
 
     if let Ok(path) = get_env("PATH") {
         for dir in env::split_paths(&path) {
-            let executables = Arc::clone(&executables);
+            let clonable = executables.clone();
             thread::spawn(move || {
                 // maybe the path in PATH variable does not exist
                 if let Ok(dir_entries) = std::fs::read_dir(Path::new(&dir)) {
@@ -75,7 +75,7 @@ pub fn get_executables_in_path() -> Vec<PathBuf> {
                         // according to docs, if we have an IO error during
                         // the iteration, the item will return Error
                         if is_executable(entry.path().as_path()).is_ok() {
-                            let mut vec = executables.lock().expect(POISONED_LOCK_MSG_ERR);
+                            let mut vec = clonable.lock().expect(POISONED_LOCK_MSG_ERR);
                             vec.push(entry.path());
                         }
                     }

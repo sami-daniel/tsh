@@ -20,6 +20,7 @@ impl Command {
         let mut redirect_helper = RedirectHelper::new();
         self.configure_redirects(&mut redirect_helper)?;
         let executable = from_command(self)?;
+        let executable = executable.executable;
 
         executable()?;
 
