@@ -23,7 +23,9 @@ fn main() -> Result<()> {
             stdin.read_line(&mut buffer)?;
         }
 
-        executor::execute(&buffer)?;
+        if let Err(e) = executor::execute(&buffer) {
+            eprintln!("{}", e)
+        }
 
         buffer.clear();
     }

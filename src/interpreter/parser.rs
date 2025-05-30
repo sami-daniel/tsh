@@ -7,7 +7,7 @@ use crate::utils::report_line_err;
 #[derive(Debug)]
 pub enum Command {
     Simple {
-        command_main: String,
+        command_name: String,
         args: Vec<String>,
         redirects: Vec<Redirect>,
     },
@@ -170,7 +170,7 @@ pub fn try_parse_input(input: &str) -> Result<Option<Command>> {
         let name = name.trim().to_string();
 
         Ok(Some(Command::Simple {
-            command_main: name,
+            command_name: name,
             args: args.into_iter().skip(1).collect(),
             redirects,
         }))
