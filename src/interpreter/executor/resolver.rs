@@ -62,7 +62,7 @@ pub fn from_command(command: &Command) -> Result<CommandExecutor> {
 
     match executor.target_type {
         TargetExecutor::Builtin => {
-            fn build_builtin_exec_from_original<E>(
+            fn build_builtin_exec_jobbed_from_original<E>(
                 e: E,
             ) -> Box<dyn FnOnce() -> Result<()> + 'static + Send>
             where
@@ -77,7 +77,7 @@ pub fn from_command(command: &Command) -> Result<CommandExecutor> {
             }
 
             if job {
-                executor.executable = build_builtin_exec_from_original(executor.executable);
+                executor.executable = build_builtin_exec_jobbed_from_original(executor.executable);
             }
 
             Ok(executor)
