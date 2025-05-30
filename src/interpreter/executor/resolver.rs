@@ -169,10 +169,6 @@ fn build_ext_exec(
             let args = args.iter().map(|s| s.as_c_str()).collect::<Vec<_>>();
             let env: Vec<&CStr> = vec![];
 
-            dbg!(&c_path);
-            dbg!(&args);
-            dbg!(&env);
-
             // SAFETY:
             // We are immediatly invoking execve after fork, so no 'abandoned locks'
             // or unreleasead mutexes can not be touched by Rust and consequently no
