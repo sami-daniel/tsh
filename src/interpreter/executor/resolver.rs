@@ -1,9 +1,6 @@
 use crate::{
     interpreter::parser::Command,
-    utils::{
-        POISONED_LOCK_MSG_ERR, STDERR, STDOUT, get_cwd, get_executable_path,
-        get_executables_in_path,
-    },
+    utils::{EXECUTABLES, POISONED_LOCK_MSG_ERR, STDERR, STDOUT, get_cwd, get_executable_path},
 };
 use anyhow::Result;
 use nix::{
@@ -23,14 +20,17 @@ pub type CommandExecutor = Box<dyn FnOnce() -> Result<()>>;
 pub fn from_command(command: &Command) -> Result<CommandExecutor> {
     match command {
         Command::Simple {
-            command_name, args, ..
+            command_name,
+            args,
+            dont_wait,
+            ..
         } => {
             let cmd_name = &str::to_lowercase(command_name)[..];
             match cmd_name {
                 "echo" => Ok(build_echo_exec(args)),
                 "exit" => Ok(build_exit_exec(args)),
                 "pwd" => Ok(build_pwd_exec()),
-                _ => Ok(build_ext_exec(command_name, args)),
+                _ => Ok(build_ext_exec(command_name, args, *dont_wait)),
             }
         }
     }
@@ -88,11 +88,17 @@ fn build_pwd_exec() -> Box<dyn FnOnce() -> Result<()>> {
 }
 
 #[inline(always)]
-fn build_ext_exec(command_name: &str, args: &[String]) -> Box<dyn FnOnce() -> Result<()>> {
+fn build_ext_exec(
+    command_name: &str,
+    args: &[String],
+    job: bool,
+) -> Box<dyn FnOnce() -> Result<()>> {
+    // TODO: Refactor to not clone args.
     let command_name = command_name.to_owned();
     let args = args.to_owned();
     Box::new(move || {
-        let executables = get_executables_in_path();
+        let executables = EXECUTABLES.lock().expect(POISONED_LOCK_MSG_ERR);
+        let executables = executables.borrow();
         let executable_path = get_executable_path(&command_name[..], &executables);
         let stderr = STDERR.lock().expect(POISONED_LOCK_MSG_ERR);
         let mut stderr = stderr.borrow_mut();
@@ -113,6 +119,10 @@ fn build_ext_exec(command_name: &str, args: &[String]) -> Box<dyn FnOnce() -> Re
             let args = args.iter().map(|s| s.as_c_str()).collect::<Vec<_>>();
             let env: Vec<&CStr> = vec![];
 
+            dbg!(&c_path);
+            dbg!(&args);
+            dbg!(&env);
+
             // SAFETY:
             // We are immediatly invoking execve after fork, so no 'abandoned locks'
             // or unreleasead mutexes can not be touched by Rust and consequently no
@@ -129,12 +139,14 @@ fn build_ext_exec(command_name: &str, args: &[String]) -> Box<dyn FnOnce() -> Re
                     // are with an 'abandoned lock' or unreleased mutexes protecting it and
                     // that would cause a deadlock and the child process will never terminate.
                     // So we can not use std::process:;exit, cause it may touch some of the things
-                    // described above, executing some variable Drop, etc. So the libc::exit are
+                    // described above, executing variable Drop, etc. So the libc::exit are
                     // more safe, in this case, than std::process::exit.
                     unsafe { libc::exit(1) };
                 }
                 ForkResult::Parent { child, .. } => {
-                    waitpid(child, None)?;
+                    if !job {
+                        waitpid(child, None)?;
+                    }
                 }
             }
         } else {

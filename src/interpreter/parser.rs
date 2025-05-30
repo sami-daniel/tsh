@@ -1,4 +1,4 @@
-use std::{path::PathBuf, vec};
+use std::{ops::Sub, path::PathBuf, vec};
 
 use anyhow::{Result, anyhow};
 
@@ -10,6 +10,7 @@ pub enum Command {
         command_name: String,
         args: Vec<String>,
         redirects: Vec<Redirect>,
+        dont_wait: bool,
     },
 }
 
@@ -41,6 +42,7 @@ pub fn try_parse_input(input: &str) -> Result<Option<Command>> {
     let mut args = vec![];
     let mut redirects = vec![];
     let mut current_redirect: Option<(i32, RedirectionType)> = None;
+    let mut dont_wait = false;
 
     while let Some(c) = chars.next() {
         match c {
@@ -117,6 +119,13 @@ pub fn try_parse_input(input: &str) -> Result<Option<Command>> {
                     current_redirect = Some((1, mode));
                 }
             }
+            '^' if !single_quotes
+                && !double_quotes
+                && chars.peek().ne(&Some(&' '))
+                && arg_buffer.is_empty() =>
+            {
+                dont_wait = true
+            }
             _ => {
                 if let Some((fd, mode)) = current_redirect {
                     match mode {
@@ -168,11 +177,13 @@ pub fn try_parse_input(input: &str) -> Result<Option<Command>> {
 
     if let Some(name) = args.first() {
         let name = name.trim().to_string();
+        let take = args.len().sub(if dont_wait { 1 } else { 0 });
 
         Ok(Some(Command::Simple {
             command_name: name,
-            args: args.into_iter().skip(1).collect(),
+            args: args.into_iter().skip(1).take(take).collect(),
             redirects,
+            dont_wait,
         }))
     } else {
         Ok(None)
