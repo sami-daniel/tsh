@@ -58,6 +58,11 @@ pub fn get_executable_path<'a>(
 }
 
 pub fn get_executables_in_path() -> Vec<PathBuf> {
+    // FIXME: Put the executables in some tsh.sources file to avoid loading 
+    // this everytime that bash starts up, and update or remove entries using
+    // communication with aptd (or the current daemon of the package manager)
+    // via dbus 
+    
     let executables = Arc::new(Mutex::new(vec![]));
 
     if let Ok(path) = get_env("PATH") {
